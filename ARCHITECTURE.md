@@ -2,7 +2,7 @@
 
 ## Overview
 
-The deployment uses a small AWS VPC with one public API tier and one private worker tier. Terraform creates all networking, security groups, EC2 instances, an Elastic IP, and startup scripts.
+The deployment uses a small AWS VPC with one public API tier and one private worker tier. Terraform creates all networking, security groups, EC2 instances, an Elastic IP, and startup scripts. The runtime uses the official Alchemyst May 2026 `quickstart` workers and the iii engine.
 
 ## Network
 
@@ -18,7 +18,7 @@ The public subnet routes `0.0.0.0/0` through an Internet Gateway. The private su
 
 ### API Gateway
 
-The API gateway is a `t2.micro` EC2 instance in the public subnet. It has an Elastic IP and runs an Express.js service on port `8000`.
+The API gateway is an EC2 instance in the public subnet. It has an Elastic IP, runs an Express.js service on port `8000`, and runs the iii engine with the HTTP trigger bound locally on `127.0.0.1:3111`.
 
 Endpoints:
 
@@ -28,27 +28,26 @@ Endpoints:
 
 ### Workers
 
-Workers are `t2.micro` EC2 instances in the private subnet. Terraform assigns stable private IPs:
+Workers are EC2 instances in the private subnet. Terraform assigns stable private IPs:
 
-- `worker-0`: `10.0.2.10:9000`
-- `worker-1`: `10.0.2.11:9001`
-- Additional workers continue at `10.0.2.12:9002`, and so on
+- `worker-0`: `10.0.2.10`, official Python `inference-worker`
+- `worker-1`: `10.0.2.11`, official TypeScript `caller-worker`
+- Additional workers alternate Python and TypeScript roles
 
-The worker service exposes:
+Workers connect back to the iii engine on the API gateway over `ws://<api-gateway-private-ip>:49134`. The TypeScript worker registers `http::run_inference_over_http`, which forwards to `inference::get_response`; that function triggers the Python worker function `inference::run_inference`.
 
-- `GET /health`
-- `POST /infer`
-
-The setup scripts clone `https://github.com/Alchemyst-ai/quickstart` onto each instance for assignment context and run a stable wrapper service with predictable health and inference endpoints.
+The setup scripts clone `https://github.com/Alchemyst-ai/hiring` and run the bundled `may-2026/devops/quickstart` worker code.
 
 ## Traffic Flow
 
 ```text
 Client
   -> HTTP POST /infer on API gateway public IP:8000
-  -> API gateway selects worker from generated workers.json
-  -> API gateway sends HTTP RPC to worker private IP:9000+
-  -> Worker returns JSON
+  -> API gateway normalizes prompt into chat messages
+  -> API gateway calls local iii HTTP trigger /v1/chat/completions
+  -> TypeScript caller-worker receives trigger through iii
+  -> caller-worker triggers Python inference-worker through iii RPC
+  -> Python inference-worker returns model output
   -> API gateway returns normalized JSON to client
 ```
 
@@ -59,12 +58,13 @@ Client
 - Inbound SSH `22` from `0.0.0.0/0` for assignment debugging
 - Inbound API port `8000` from `0.0.0.0/0`
 - Inbound `80` and `443` reserved for future reverse proxy/TLS
+- Inbound iii engine WebSocket `49134` from the worker security group
 - Outbound all traffic, needed for package installation and worker calls
 
 ### Worker Security Group
 
 - SSH `22` only from the API gateway security group
-- RPC `9000-9010` from the API gateway security group
+- RPC `9000-9010` from the API gateway security group, reserved for alternate direct worker RPC demos
 - RPC `9000-9010` from the worker security group for inter-worker calls
 - Outbound all traffic through the NAT gateway
 
@@ -101,8 +101,8 @@ This keeps worker instances private while still allowing debugging during review
 
 | Resource | Current Choice | Cost Consideration |
 | --- | --- | --- |
-| API gateway | `t2.micro` | Free-tier eligible, subject to account monthly hour limits |
-| Workers | `t2.micro`, count-based | More workers consume free-tier hours faster |
+| API gateway | `t3.large` by default | Larger than needed for the gateway, but keeps one variable simple |
+| Workers | `t3.large`, count-based | Safer for the official Python model worker; short demos should fit AWS credits |
 | EBS | Default root volumes | Free-tier eligible within account limits |
 | Elastic IP | One attached IP | No charge while attached and in use |
 | NAT Gateway | Enabled by default | Not free-tier; used so private workers can install packages at boot |
@@ -121,7 +121,7 @@ For production scale:
 - Use service discovery instead of static worker config.
 - Move large-model inference to GPU-backed workers and a purpose-built serving runtime such as vLLM or Hugging Face TGI.
 
-Vertical scaling is a matter of changing instance families, but the assignment validation intentionally pins `instance_type` to `t2.micro`. Remove that validation only after leaving the free-tier target.
+Vertical scaling is a matter of changing instance families. The Terraform variable allows `t2.micro`, `t3.small`, `t3.medium`, and `t3.large`; `t3.large` is the safer default for the official Python inference worker.
 
 ## Disaster Recovery
 

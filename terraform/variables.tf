@@ -40,13 +40,13 @@ variable "worker_count" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. Kept to t2.micro for the assignment/free-tier target."
+  description = "EC2 instance type. t3.large is safer for the official quickstart Python model worker; use smaller only after testing memory."
   type        = string
-  default     = "t2.micro"
+  default     = "t3.large"
 
   validation {
-    condition     = var.instance_type == "t2.micro"
-    error_message = "instance_type must be t2.micro for this free-tier assignment scaffold."
+    condition     = contains(["t2.micro", "t3.small", "t3.medium", "t3.large"], var.instance_type)
+    error_message = "instance_type must be one of: t2.micro, t3.small, t3.medium, t3.large."
   }
 }
 

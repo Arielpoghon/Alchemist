@@ -12,7 +12,7 @@ log() {
 log "Starting worker setup: index=$WORKER_INDEX port=$WORKER_PORT api_gateway=$API_GATEWAY_IP"
 
 yum update -y
-yum install -y git curl wget vim htop python3 python3-pip
+yum install -y git curl wget vim htop python3 python3-pip gcc python3-devel
 
 if ! command -v node >/dev/null 2>&1; then
   log "Installing Node.js 18"
@@ -20,111 +20,53 @@ if ! command -v node >/dev/null 2>&1; then
   yum install -y nodejs
 fi
 
-if [ ! -d /opt/quickstart ]; then
-  log "Cloning Alchemyst quickstart repository"
-  git clone https://github.com/Alchemyst-ai/quickstart.git /opt/quickstart || log "Quickstart clone failed; worker wrapper will still run"
+if [ ! -d /opt/hiring ]; then
+  log "Cloning Alchemyst hiring repository with official quickstart"
+  git clone --depth 1 https://github.com/Alchemyst-ai/hiring.git /opt/hiring
 fi
-
-mkdir -p /opt/alchemyst-worker
-cd /opt/alchemyst-worker
-
-cat > package.json <<'EOF'
-{
-  "name": "alchemyst-worker",
-  "version": "1.0.0",
-  "private": true,
-  "main": "worker.js",
-  "scripts": {
-    "start": "node worker.js"
-  },
-  "dependencies": {
-    "express": "^4.21.2"
-  }
-}
-EOF
-
-cat > worker.js <<'EOF'
-const express = require('express');
-
-const app = express();
-app.use(express.json({ limit: '1mb' }));
-
-const workerIndex = Number(process.env.WORKER_INDEX || 0);
-const workerPort = Number(process.env.WORKER_PORT || 9000);
-const workerType = process.env.WORKER_TYPE || (workerIndex % 2 === 0 ? 'python' : 'typescript');
-const apiGatewayIp = process.env.API_GATEWAY_IP || 'unknown';
-
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    worker_index: workerIndex,
-    worker_type: workerType,
-    api_gateway_ip: apiGatewayIp,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.post('/infer', (req, res) => {
-  const start = Date.now();
-  const { prompt, model = 'llama' } = req.body || {};
-
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({
-      error: 'Missing or invalid "prompt" field',
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  res.status(200).json({
-    result: `[$${workerType}-worker-$${workerIndex}] Received prompt for model "$${model}": $${prompt}`,
-    model,
-    worker_index: workerIndex,
-    worker_type: workerType,
-    duration_ms: Date.now() - start,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.listen(workerPort, '0.0.0.0', () => {
-  console.log(`Alchemyst $${workerType} worker $${workerIndex} listening on 0.0.0.0:$${workerPort}`);
-});
-
-process.on('SIGTERM', () => process.exit(0));
-process.on('SIGINT', () => process.exit(0));
-EOF
 
 if [ $((WORKER_INDEX % 2)) -eq 0 ]; then
   WORKER_TYPE="python"
+  WORKER_DIR="/opt/hiring/may-2026/devops/quickstart/workers/inference-worker"
+  WORKER_CMD="/usr/bin/python3 inference_worker.py"
 else
   WORKER_TYPE="typescript"
+  WORKER_DIR="/opt/hiring/may-2026/devops/quickstart/workers/caller-worker"
+  WORKER_CMD="/usr/bin/npm run dev"
 fi
 
-cat > .env <<EOF
+cat > /etc/alchemyst-worker.env <<EOF
 WORKER_INDEX=$WORKER_INDEX
 WORKER_PORT=$WORKER_PORT
 WORKER_HOST=0.0.0.0
 WORKER_TYPE=$WORKER_TYPE
 API_GATEWAY_IP=$API_GATEWAY_IP
+III_URL=ws://$API_GATEWAY_IP:49134
 LOG_LEVEL=info
 EOF
 
-log "Installing worker dependencies"
-npm install --omit=dev
-chown -R ec2-user:ec2-user /opt/alchemyst-worker /opt/quickstart 2>/dev/null || true
+log "Installing official quickstart worker dependencies for $WORKER_TYPE"
+cd "$WORKER_DIR"
+if [ "$WORKER_TYPE" = "python" ]; then
+  pip3 install --upgrade pip
+  pip3 install -r requirements.txt
+else
+  npm install
+fi
+chown -R ec2-user:ec2-user /opt/hiring 2>/dev/null || true
 
 cat > /etc/systemd/system/alchemyst-worker.service <<'EOF'
 [Unit]
-Description=Alchemyst Worker
+Description=Alchemyst Official Quickstart Worker
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=ec2-user
-WorkingDirectory=/opt/alchemyst-worker
-EnvironmentFile=/opt/alchemyst-worker/.env
-ExecStart=/usr/bin/node worker.js
+WorkingDirectory=__WORKER_DIR__
+EnvironmentFile=/etc/alchemyst-worker.env
+ExecStart=__WORKER_CMD__
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -135,16 +77,19 @@ SyslogIdentifier=alchemyst-worker
 WantedBy=multi-user.target
 EOF
 
+sed -i "s#__WORKER_DIR__#$WORKER_DIR#g" /etc/systemd/system/alchemyst-worker.service
+sed -i "s#__WORKER_CMD__#$WORKER_CMD#g" /etc/systemd/system/alchemyst-worker.service
+
 systemctl daemon-reload
 systemctl enable alchemyst-worker
 systemctl restart alchemyst-worker
 
 for attempt in $(seq 1 30); do
-  if curl -fsS "http://localhost:$WORKER_PORT/health" >/dev/null; then
-    log "Worker is healthy"
+  if systemctl is-active --quiet alchemyst-worker; then
+    log "$WORKER_TYPE quickstart worker service is active"
     exit 0
   fi
-  log "Waiting for worker health check, attempt $attempt"
+  log "Waiting for worker service, attempt $attempt"
   sleep 2
 done
 

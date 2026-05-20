@@ -97,7 +97,7 @@ Move workers to an Auto Scaling Group in private subnets. Use health checks and 
 
 ### Larger Models
 
-For 100x larger models, `t2.micro` is not suitable. Use GPU instances and specialized inference servers:
+For 100x larger models, the current CPU instances are not suitable. Use GPU instances and specialized inference servers:
 
 - vLLM
 - Hugging Face Text Generation Inference

@@ -35,6 +35,14 @@ resource "aws_security_group" "api_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description     = "iii engine WebSocket from private workers"
+    from_port       = 49134
+    to_port         = 49134
+    protocol        = "tcp"
+    security_groups = [aws_security_group.worker_sg.id]
+  }
+
   egress {
     description = "Reach workers and download setup dependencies"
     from_port   = 0
