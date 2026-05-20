@@ -4,7 +4,7 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '1mb' })); 
 
 const API_PORT = Number(process.env.API_PORT || 8000);
 const API_HOST = process.env.API_HOST || '0.0.0.0';
