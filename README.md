@@ -205,12 +205,4 @@ terraform destroy
 └── README.md
 ```
 
-## Submission
-
-Email:
-
-- To: `anuran@getalchemystai.com`
-- CC: `saumitra@getalchemystai.com`, `khushi@getalchemystai.com`
-- Subject: `DevOps Internship Assignment - <Your Name>`
-
 Include the GitHub repository link, deployment instructions, and any notes about cost or NAT configuration.
