@@ -1,4 +1,4 @@
-output "api_gateway_public_ip" {
+output "api_gateway_public_ip" { 
   description = "Elastic public IPv4 address for the API gateway."
   value       = aws_eip.api_gateway.public_ip
 }
